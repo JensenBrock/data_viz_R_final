@@ -1,0 +1,366 @@
+---
+title: "Final Project"
+author: "Jensen Brock"
+date: "7/31/2021"
+output:
+  pdf_document:  
+    dev: cairo_pdf
+  html_document:
+    dev: png
+---
+
+# Executive summary
+
+Atlanta sports are known to be rife with disappointment. However, from 2017 to 2019 there was one bright spot in the Atlanta sports landscape. Atlanta United. Their inaugural season, aided by their high flying attack minded style, proved that the city could ravenously support a team. However, 2020 was an exceedingly difficult year for the club. Their star player suffers a season ending injury in the first game of the season, and the pandemic hit the team as hard as everyone else in the world--although likely more difficult for new international players that lacked the support system the domestic players enjoy. This report shows the ever increasing investment and how they failed to pay dividends in on field performance.
+
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(gghalves)
+library(patchwork)
+library(readxl)
+library(scales)
+library(ggrepel)
+```
+# Data background
+
+The primary data sources are individual match data, end of season standings, and annual player salaries. These data were collected into a bundle and hosted on Kaggle. They originally come from mlssoccer.com and the MLS Players Association website. 
+
+```{r data-import, message=FALSE, warning=FALSE}
+all_goalkeepers_raw <- read_csv("data/all_goalkeepers.csv")
+all_players_raw <- read_csv("data/all_players.csv")
+end_of_season <- read_csv("data/all_tables.csv")
+match_events <- read_csv("data/events.csv")
+matches <- read_csv("data/matches.csv")
+salary_21_raw <- read_csv("data/2021-Spring-Summer-Salary-List_210513_132332.csv")
+salary_20_raw <- read_excel("data/2020-Fall-Winter-Salary-List-alphabetical.xlsx")
+salary_19_raw <- read_excel("data/Salary-List-Fall-Release-FINAL-Salary-List-Fall-Release-MLS.xlsx")
+salary_18_raw <- read_csv("data/a2018-09-15-Salary-Information-Alphabetical.csv")
+salary_17_raw <- read_csv("data/mls-salaries-2017.csv")
+
+```
+
+# Data cleaning
+
+The data were separated into several data sets. To preprare the data for analysis I performed basic transformations to get the data into a workable format, then merged datasets together utilizing rbind() and left_join() functions.
+
+```{r cleaning-I, message=FALSE, warning=FALSE}
+# fixing the column names of salary_19 and salary_20
+
+salary_20_raw <- salary_20_raw %>% 
+  select(3,1,2,4:6)
+
+salary_21_raw <- salary_21_raw %>% 
+  select(3,1,2,4:6)
+
+
+names(salary_18_raw) <- names(salary_17_raw)
+names(salary_19_raw) <- names(salary_17_raw)
+names(salary_20_raw) <- names(salary_17_raw)
+names(salary_21_raw) <- names(salary_17_raw)
+
+# Filtering for Relevent Data
+salary_17 <- salary_17_raw %>% 
+  filter(club == "ATL")
+
+salary_18 <- salary_18_raw %>% 
+  filter(club == "Atlanta United")
+
+salary_19 <- salary_19_raw %>% 
+  filter(club == "Atlanta United")
+
+salary_20 <- salary_20_raw  %>% 
+  filter(club == "Atlanta United")
+
+salary_21 <- salary_21_raw  %>% 
+  filter(club == "Atlanta United")
+
+all_players <- all_players_raw  %>% 
+  filter(Club == "ATL",
+         Season == "reg")
+
+# matches <- matches %>% 
+#   filter(home == "Atlanta United FC")
+
+all_goalkeepers <- all_goalkeepers_raw %>% 
+  filter(Club == "ATL",
+         Season == "reg")
+
+
+```
+
+
+```{r cleaning-II}
+players <- all_players %>% 
+  select(1:6,27,28) %>% 
+  rbind(all_goalkeepers %>% 
+          select(1:6, 18,19)) %>% 
+  arrange(Year) %>% 
+  filter(Year >= 2017)
+
+player_salary <- salary_17 %>% 
+  mutate(Year = 2017) %>% 
+  rbind(salary_18 %>% 
+          mutate(Year = 2018)) %>% 
+  rbind(salary_19 %>% 
+          mutate(Year = 2019)) %>% 
+  rbind(salary_20 %>% 
+          mutate(Year = 2020)) %>% 
+  rbind(salary_21 %>% 
+          mutate(Year = 2021)) %>% 
+  mutate(Player = paste0(first_name, " ", last_name)) %>% 
+  select(8,7,5,6)
+
+players_clean <- players %>% 
+  left_join(player_salary, by = c("Player", "Year")) %>% 
+  drop_na() %>% 
+  mutate(base_salary = parse_number(base_salary),
+         guaranteed_compensation = parse_number(guaranteed_compensation))
+
+league_table_stats <- end_of_season %>% 
+  filter(Team == "Atlanta United FC",
+         is.na(Qualification) == FALSE) 
+
+```
+
+
+```{r effect_of_salary-on-games-played, include=FALSE, eval=FALSE}
+players_clean %>% 
+  mutate(Year = factor(Year)) %>% 
+ggplot(mapping = aes(x = guaranteed_compensation, y = GS)) + 
+  geom_smooth(method = "lm") +
+  geom_point(aes(color = Year)) +
+  facet_wrap(facets = "Year") +
+  scale_color_viridis_d() +
+  scale_x_continuous(labels = dollar, trans = "log") +
+  theme(legend.position = "bottom") +
+  labs(x = element_blank(), y = "Games Started")
+
+
+```
+
+# Individual figures
+
+## Figure 1
+This figure shows year over year change in salary expenditures by Atlanta United with a secondary line showing expenditures without the team's most important player. This is important to demonstrate that Josef Martinez salary only had a major effect in overall expenditures in 2019. 
+To create contrast I used the minimal theme to accentuate the lines in the graph that use the team's primary colors. The overall theme is repeated in subsequent figures. 
+
+```{r team-salries-YoY}
+set.seed(69)
+clean_table <- league_table_stats %>% 
+  select(13,1,3:5,7:10)
+
+atl_salaries <- player_salary %>% 
+  group_by(Year) %>% 
+  summarise(team_salary_total = sum(parse_number(guaranteed_compensation)),
+            average_salary = mean(parse_number(guaranteed_compensation))) #%>% 
+  #left_join(clean_table)
+
+atl_salaries$Pts <- as.numeric(atl_salaries$Pts)
+atl_salaries$GD <- atl_salaries$GF - atl_salaries$GA
+atl_salaries$dollars_per_point <- atl_salaries$team_salary_total/atl_salaries$Pts
+atl_sans_josef <- player_salary %>% 
+  filter(Player != "Josef Martinez") %>% 
+  group_by(Year) %>% 
+  summarise(team_salary_total = sum(parse_number(guaranteed_compensation)),
+            average_salary = mean(parse_number(guaranteed_compensation)))
+
+# c("#B20031", "#74612C","#2E2A26", "#FF7856")
+ggplot(atl_salaries, mapping = aes(Year, team_salary_total)) +
+  geom_line(color = "#2E2A26", size = 0.7) +
+  geom_line(atl_sans_josef, mapping = aes(Year, team_salary_total), 
+            inherit.aes = FALSE, color = "#B20031", size = 0.7) +
+  geom_label(aes(x = 2020, y = 10546116, label = "Without\nJosef Martinez"), 
+             inherit.aes = FALSE, hjust = 0.8, vjust = -0.4, size = 3) +
+  geom_label(aes(x = 2018, y = 9495654, label = "MLS Cup\nChampions"), 
+             inherit.aes = FALSE, hjust = 0.8, vjust = -0.2, size = 3) +
+  geom_label(aes(x = 2019, y = 9495654, label = "Frank de Boer\nhired as Coach"), 
+             inherit.aes = FALSE, hjust = 0.9, vjust = -1, size = 3) +
+  geom_point(aes(x = 2018, y = 9495654), inherit.aes = FALSE,
+             color = "#2E2A26") +
+  geom_point(aes(x = 2019, y = 9807999), inherit.aes = FALSE,
+             color = "#2E2A26") +
+  scale_y_continuous(labels = scales::dollar) +
+  theme_minimal() +
+  theme(text = element_text(family = "Gowun Batang"),
+        plot.title = element_text(face = "bold")) +
+  labs(x = element_blank(), y = "Total Team Salary", 
+       title = "Year Over Year Change in Team Salary",
+       caption = "Source: mlsplayers.org")
+
+
+ ggsave("output/yoy_updated.svg")
+
+```
+
+```{r dollar-per-point, include=FALSE, eval=FALSE}
+
+ggplot(atl_salaries, mapping = aes(x = Year, dollars_per_point)) +
+  geom_col(fill = "#B20031") +
+  scale_y_continuous(labels = scales::dollar) +
+  theme_minimal() +
+  theme(text = element_text(family = "Gowun Batang"),
+        plot.title = element_text(hjust = 0.5)) +
+  labs(x = element_blank(), y = "Dollars per Point",
+       title = "Amount Spent on Salary per Point Earned Each Season",
+       caption = "Sources: mlssoccer.com, mlsplayers.org")
+
+```
+
+
+## Figure 2
+This rain cloud plot shows the distribution of goals each season over the course of a match. The interesting thing to point out is the shift in the distribution in the 2020 season, and the significant drop in goals during that season. 
+This plot utilizes similar tactics to create continuity across all plots. Since an axis title was necessary for the x axis the plot title was aligned to create symmetry and balance between the title and axis label. 
+ 
+```{r}
+atl_goals <- match_events %>% 
+  # filter(str_detect(Event, "Atlanta") == TRUE) %>% 
+  filter(str_detect(Event, "Goal") == TRUE) %>%
+  filter(str_detect(Event, "\\(Atlanta United FC\\)") == TRUE) %>% 
+  left_join((matches %>% 
+               filter(part_of_competition == "Regular Season") %>% 
+               select(1:5,7,8)))
+goal_time <- atl_goals %>% 
+  mutate(score_minute = parse_number(Time),
+         is_home = if_else(home == "Atlanta United FC", 1,0)) %>% 
+  select(6:8,10,11)
+
+
+set.seed(17)
+goal_time %>% 
+  mutate(year = as.character(year)) %>%
+  drop_na() %>% 
+ggplot(mapping = aes(x = fct_rev(year), y = score_minute, color = year)) +
+  geom_half_boxplot(side = "l", width = 0.5, 
+                    alpha = 0.2, nudge = 0.1) +
+  geom_half_point(side = "l", size = 0.3) +
+  geom_half_violin(aes(fill = year),side = "r") +
+  scale_fill_manual(values =  c("#B20031", "#74612C","#2E2A26", "#FF7856")) +
+  scale_color_manual(values =  c("#B20031", "#74612C","#2E2A26", "#FF7856")) +
+  scale_y_continuous(breaks = c(0,15,30,45,60,75,90)) +
+  guides(fill = "none", color = "none") +
+  labs(x = element_blank(), y = "Minute Scored",
+       title = "Distribution of Goals Scored each Season",
+       caption = "Source: mlssoccer.com") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        text = element_text(family = "Gowun Batang")) +
+  coord_flip()
+
+# ggsave("output/goals.svg")
+```
+
+
+```{r comparison-data_cleaning, message=FALSE, warning=FALSE, echo=FALSE}
+
+player_salary_combined <- salary_17_raw %>% 
+  mutate(Year = 2017) %>% 
+  rbind(salary_18_raw %>% 
+          mutate(Year = 2018)) %>%
+  rbind(salary_19_raw %>% 
+          mutate(Year = 2019)) %>% 
+  rbind(salary_20_raw %>% 
+          mutate(Year = 2020)) %>% 
+  rbind(salary_21_raw %>% 
+          mutate(Year = 2021)) %>% 
+  mutate(Player = paste0(first_name, " ", last_name)) %>% 
+  select(1,8,7,5,6) %>% 
+  mutate(club = if_else(club == "ATL", "Atlanta United", club)) %>% 
+  mutate(club = if_else(club == "NYRB", "New York Red Bulls", club)) %>% 
+  mutate(club = if_else(club == "SEA", "Seattle Sounders FC", club)) %>% 
+  mutate(club = if_else(club == "POR", "Portland Timbers", club))
+
+group_analysis <- player_salary_combined %>% 
+  filter(club %in% c("New York Red Bulls", "Seattle Sounders FC", 
+                     "Atlanta United", "Portland Timbers"))
+
+group_table <- end_of_season %>% 
+                        filter(Year >= 2017,
+                               Conference != "Overall") %>% 
+                       select(2,13,1,3:10) %>% 
+  mutate(Team = if_else(Team == "Atlanta United FC", "Atlanta United", Team)) %>% 
+  mutate(Team = if_else(Team == "Seattle Sounders FC (C)", "Seattle Sounders FC", Team))
+
+
+
+comparison <- group_analysis %>% 
+  group_by(club, Year) %>% 
+  summarise(salary = sum(parse_number(guaranteed_compensation))) %>% 
+  ungroup() %>% 
+  left_join(group_table, by = c("Year" = "Year", "club" = "Team"))
+
+
+```
+
+```{r comparison-plot-I, include=FALSE, eval=FALSE}
+ggplot(comparison, mapping = aes(x = factor(Year), y = Pos, color = club)) +
+  geom_pointrange(aes(ymin = Inf, ymax = Pos)) +
+  facet_wrap(facets = "club") + 
+  scale_y_reverse(breaks = c(1,6,12,18)) +
+  guides(color = "none") +
+  labs(x = element_blank(), y = "End of Season Position",
+       title = "Massive Drop for Atlanta",
+       caption = "Source: mlssoccer.com") +
+  theme(plot.title = element_text(face = "bold"),
+        text = element_text(family = "Gowun Batang"))
+  
+```
+
+# Plot 3 Comparison
+The President of the club set the standard since its inception that they had aspirations of being a top club, not only in the league, but on the continent and the globe. In recent times the club has failed to even be a top club in the league, much less be a top club in the continent. This plot compares expenditures and performance across the past four years between clubs with similar aspirations. 
+
+The centering of titles is repeated in this third figure. The alignment guides the eyes down the plot highlighting the differences between each club. The one area that this plot falls short is contrast with line color. In this situation, I prioritized design over better contrast. The colors chosen are the team's primary colors. 
+
+```{r}
+comparison <- comparison %>% 
+  mutate(Pos = if_else(club == "Atlanta United" & Year == 2021, 10, Pos)) %>% 
+  mutate(Pos = if_else(club == "New York Red Bulls" & Year == 2021, 9, Pos)) %>% 
+  mutate(Pos = if_else(club == "Seattle Sounders FC" & Year == 2021, 1, Pos)) %>% 
+  mutate(Pos = if_else(club == "Portland Timbers" & Year == 2021, 8, Pos))
+
+
+club_position <- ggplot(comparison, mapping = aes(x = club, y = Pos, 
+                                                  color = club)) +
+  geom_pointrange(aes(ymin = Inf, ymax = Pos)) +
+  facet_wrap(facets = "Year", nrow = 1) + 
+  scale_y_reverse(breaks = c(1,6,12,18)) +
+  scale_color_manual(values = c("#A29061", "#ED1E36", "#0D421D", "#5D9741")) +
+  guides(color = "none", size = "none") +
+  labs(x = element_blank(), y = element_blank(),
+       title = "Conference Table Position") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(family = "Gowun Batang"),
+        axis.text.x = element_text(size = 6)) +
+  coord_flip()
+  
+club_salary <- ggplot(comparison, mapping = aes(x = Year, y = salary, color = club)) +
+  geom_line(size = 1) +
+  scale_color_manual(values = c("#A29061", "#ED1E36", "#0D421D", "#5D9741")) +
+  scale_y_continuous(labels = scales::dollar) +
+  labs(x = element_blank(), y = "Total Salary",
+       caption = "Source: mlssoccer.com, mlsplayers.org",
+       color = "Club") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"),
+        text = element_text(family = "Gowun Batang"),
+        plot.subtitle = element_text(size = 9),
+        legend.position = "none")
+
+club_position + club_salary + plot_layout(ncol = 1, heights = c(0.4, 0.6))
+
+# ggsave("output/compare_update.svg")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
